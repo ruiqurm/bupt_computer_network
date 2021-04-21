@@ -192,13 +192,13 @@ int main(int argc, char **argv)
 
         case DATA_TIMEOUT:
             dbg_event("\033[31m---- DATA %d timeout\033[0m\n", arg);
-            dbg_frame("Re-send ack_expected %d",ack_expected);
-            send_data_frame(ack_expected,frame_expected,send_buffer[ack_expected % MAX_WD_SIZE].buffer);
-            // dbg_frame("---- Retry and send all packets from %d to %d\n", ack_expected,last(next_seq)); 
-            // for(int i =ack_expected;i!=next_seq;inc(i)){
-            //    send_data_frame(i,frame_expected,send_buffer[i % MAX_WD_SIZE].buffer);
-            // }
-            // //全部重传
+            // dbg_frame("Re-send ack_expected %d",ack_expected);
+            // send_data_frame(ack_expected,frame_expected,send_buffer[ack_expected % MAX_WD_SIZE].buffer);
+            dbg_frame("---- Retry and send all packets from %d to %d\n", ack_expected,last(next_seq)); 
+            for(int i =ack_expected;i!=next_seq;inc(i)){
+               send_data_frame(i,frame_expected,send_buffer[i % MAX_WD_SIZE].buffer);
+            }
+            //全部重传
             break;
         case ACK_TIMEOUT:
             dbg_event("\033[31m---- ACK timeout\033[0m\n", arg); 
