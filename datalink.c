@@ -5,15 +5,36 @@
 #include "datalink.h"
 
 #define DATA_TIMER  2000
-#define ACK_TIMER 2000 
+#define ACK_TIMER 800
 #define start_ack_timer() start_ack_timer(ACK_TIMER)
-//如果无piggybacking，单独发ACK
-#define DEBU
+// #define flush_ack_timer() stop_ack_timer();start_ack_timer();
 
-#define MAX_SEQ 7
+//如果无piggybacking，单独发ACK
+#define DEBUG
+//#define DEBUG_PRINT
+#ifdef DEBUG
+    #ifdef CHAN_DELAY
+    #undef CHAN_DELAY
+    #define CHAN_DELAY 10
+    #else
+    #define CHAN_DELAY 10  /
+    #endif
+
+    #ifdef CHAN_BPS
+    #undef CHAN_BPS
+    #define CHAN_BPS 10
+    #else
+    #define CHAN_BPS 10  /
+    #endif
+
+#endif
+// #define CHAN_BPS   8000  
+
+#define MAX_SEQ 31
 // const int MAX_WD_SIZE = (MAX_SEQ + 1) >> 1;
-#define MAX_WD_SIZE 4
+#define MAX_WD_SIZE 16
 #define inc(x)  x = (x+1) % (MAX_SEQ+1)
+#define last(x) ((x + MAX_SEQ) % (MAX_SEQ + 1))
 #define ack_now ((frame_expected + MAX_SEQ) % (MAX_SEQ + 1))
 #define between(a,b,c) ((a<=b && b<c)|| \
                     (c < a&& b>=a)|| \
@@ -37,7 +58,7 @@ struct{
 }recv_buffer[MAX_WD_SIZE];//接收方窗口缓存
 struct{
     char buffer[PKT_LEN];
-}send_buffer[MAX_WD_SIZE];//发送方窗口缓存
+}send_buffer[PKT_LEN];
 static void put_frame(unsigned char *frame, int len)
 {
     *(unsigned int *)(frame + len) = crc32(frame, len);
@@ -58,6 +79,7 @@ static void send_data_frame(int next_seq,int frame_expected,char buffer[])
 
     put_frame((unsigned char *)&s, 3 + PKT_LEN);
     start_timer(next_seq, DATA_TIMER);
+    stop_ack_timer();
 }
 
 static void send_ack_frame(void)
@@ -96,7 +118,7 @@ int main(int argc, char **argv)
 
     for (;;) {
         event = wait_for_event(&arg);
-        #ifdef DEBUG
+        #ifdef DEBUG_PRINT
         lprintf("发送窗口: 下界：ack_expected:%d 上界：next_seq:%d   接收窗口:下界(frame_expected):%d   上界(frame_expected_max) %d\n",
                     ack_expected,next_seq,frame_expected,frame_expected_max);
         #endif
@@ -121,7 +143,7 @@ int main(int argc, char **argv)
                 // if (!nak_sended){
                 //     send_nak_frame();
                 // }
-                dbg_event("**** Receiver Error, Bad CRC Checksum\n");
+                dbg_event("\033[31m**** Receiver Error, Bad CRC Checksum\033[0m\n");
                 break;
             }            
         
@@ -142,45 +164,51 @@ int main(int argc, char **argv)
                         nak_sended = 0;
                         recv_buffer[frame_expected % MAX_WD_SIZE].arrived = 0;
                         put_packet(recv_buffer[frame_expected % MAX_WD_SIZE].buffer, len - 7);
-                        dbg_frame("Send buffer %d to network layer.\n", frame_expected);
+                        dbg_frame("%d to network layer.\n", frame_expected);
                         inc(frame_expected);
                         inc(frame_expected_max);
-                        // dbg_frame("Now Recv window:%d - %d\n", frame_expected,frame_expected_max);
                         start_ack_timer();
+                        // dbg_frame("Now Recv window:%d - %d\n", frame_expected,frame_expected_max);
                     }
+                }else{
+                    dbg_warning("Departed Data %d %d, ID %d\n", f.seq, f.ack, *(short *)f.data);
                 }
                 // if (f.seq == frame_expected) {
                 //     // put_packet(f.data, len - 7);
                 //     // frame_expected = 1 - frame_expected;
                 // }
-                send_ack_frame();
+                // send_ack_frame();
             } 
             // if (f.kind==FRAME_NAK && between(ack_expected,f.ack,next_seq)){
 
             // }
             while(between(ack_expected,f.ack,next_seq)){//累计确认
-                dbg_frame("Recv ACK  %d\n", f.ack);
+                dbg_frame("Recv ACK  %d\n", ack_expected);
                 nbuffered--;
-                stop_timer(f.ack % MAX_WD_SIZE);
+                stop_timer(ack_expected);
                 inc(ack_expected);
             }
             break; 
 
         case DATA_TIMEOUT:
-            dbg_event("---- DATA %d timeout\n", arg); 
-            dbg_frame("---- Retry and send all packets from %d to %d\n", ack_expected,next_seq); 
-            for(int i =ack_expected;i!=next_seq;inc(i)){
-               send_data_frame(i,frame_expected,send_buffer[i % MAX_WD_SIZE].buffer);
-            }
-            //全部重传
+            dbg_event("\033[31m---- DATA %d timeout\033[0m\n", arg);
+            dbg_frame("Re-send ack_expected %d",ack_expected);
+            send_data_frame(ack_expected,frame_expected,send_buffer[ack_expected % MAX_WD_SIZE].buffer);
+            // dbg_frame("---- Retry and send all packets from %d to %d\n", ack_expected,last(next_seq)); 
+            // for(int i =ack_expected;i!=next_seq;inc(i)){
+            //    send_data_frame(i,frame_expected,send_buffer[i % MAX_WD_SIZE].buffer);
+            // }
+            // //全部重传
             break;
         case ACK_TIMEOUT:
+            dbg_event("\033[31m---- ACK timeout\033[0m\n", arg); 
+            send_ack_frame();
             break;
         default:
             //do nothing
             break;
         }
-        if (nbuffered < 1 && phl_ready)
+        if (nbuffered < MAX_WD_SIZE && phl_ready)
             enable_network_layer();
         else
             disable_network_layer();
