@@ -4,8 +4,8 @@
 #include "protocol.h"
 #include "datalink.h"
 
-#define DATA_TIMER  1500
-#define ACK_TIMER 1000
+#define DATA_TIMER  2500
+#define ACK_TIMER 1200
 #define start_ack_timer() start_ack_timer(ACK_TIMER)
 // #define flush_ack_timer() stop_ack_timer();start_ack_timer();
 
@@ -89,7 +89,7 @@ static void send_ack_frame(void)
 
     s.kind = FRAME_ACK;
     s.ack = ack_now;
-
+    s.seq =0;
     dbg_frame("Send ACK  %d\n", s.ack);
 
     put_frame((unsigned char *)&s, 2);
@@ -101,7 +101,7 @@ static void send_nak_frame(void)
 
     s.kind = FRAME_NAK;
     s.ack = ack_now;
-
+    s.seq = 0;
     dbg_frame("\033[31mSend NAK  %d\033[0m\n", s.ack);
 
     put_frame((unsigned char *)&s, 2);
@@ -127,10 +127,10 @@ int main(int argc, char **argv)
         switch (event) {
         case NETWORK_LAYER_READY:
             if(nbuffered <= MAX_WD_SIZE){
-                get_packet(buffer);//从物理层提取数据
-                memcpy(send_buffer[next_seq % MAX_WD_SIZE].buffer,buffer,sizeof(buffer));
+                get_packet(send_buffer[next_seq % MAX_WD_SIZE].buffer);//从物理层提取数据
+                // memcpy(send_buffer[next_seq % MAX_WD_SIZE].buffer,buffer,sizeof(buffer));
                 nbuffered++;
-                send_data_frame(next_seq,frame_expected,buffer);
+                send_data_frame(next_seq,frame_expected,send_buffer[next_seq % MAX_WD_SIZE].buffer);
                 inc(next_seq);
             }
             break;
@@ -153,9 +153,7 @@ int main(int argc, char **argv)
                 dbg_frame("Recv DATA %d %d, ID %d\n", f.seq, f.ack, *(short *)f.data);
                 if (f.seq!=frame_expected && !nak_sended){
                     send_nak_frame();
-                }else{
-                    start_ack_timer();//抑制ACK
-                }
+                }   
 
                 if (between(frame_expected,f.seq,frame_expected_max) && !recv_buffer[f.seq % MAX_WD_SIZE].arrived){
                     //在window中，且未受过
@@ -172,7 +170,7 @@ int main(int argc, char **argv)
                         // dbg_frame("Now Recv window:%d - %d\n", frame_expected,frame_expected_max);
                     }
                 }else{
-                    dbg_warning("Departed Data %d %d, ID %d\n", f.seq, f.ack, *(short *)f.data);
+                    dbg_event("Departed Data %d %d, ID %d\n", f.seq, f.ack, *(short *)f.data);
                 }
                 // if (f.seq == frame_expected) {
                 //     // put_packet(f.data, len - 7);
@@ -188,7 +186,6 @@ int main(int argc, char **argv)
             while(between(ack_expected,f.ack,next_seq)){//累计确认
                 dbg_frame("Recv ACK  %d\n", ack_expected);
                 nbuffered--;
-                nak_sended = 0;
                 stop_timer(ack_expected);
                 inc(ack_expected);
             }
